@@ -3,6 +3,7 @@ from OpenGL.GL import *
 import numpy as np
 import logging
 
+
 def parse_territory_file(file_path):
     tree = ET.parse(file_path)
     root = tree.getroot()
@@ -16,15 +17,14 @@ def parse_territory_file(file_path):
         # Get the 'd' attribute of the path element
         string_data = path.get('d')
         # split the string by spaces and append to the list as float numbers
-        territory_d = []
-        territory_c = set()
-        for i in string_data.split():
-            try:
-                territory_d.append(float(i))
-            except ValueError:
-                if i == 'Z':
-                    territory_c.add(len(territory_d) // 2)
-        territories.append((territory_id, territory_d, territory_c))
+        for s in string_data.split('Z M'):
+            territory_d = []
+            for i in s.split():
+                try:
+                    territory_d.append(float(i))
+                except ValueError:
+                    pass
+            territories.append((territory_id, territory_d))
     return territories
 
 
@@ -36,6 +36,8 @@ class TerritoryMesh:
 
         self.vertices = []
         self.indices = []
+
+        self.params = []
 
         if path:
             self.load_data(path)
@@ -53,10 +55,8 @@ class TerritoryMesh:
             for i in range(0, len(territory[1]), 2):
                 self.vertices.extend((territory[1][i], territory[1][i + 1], 0))
             for i in range(0, len(self.vertices) // 3 - offset):
-                if i + 1 in territory[2]:
-                    continue
                 self.indices.append(offset + i)
-                self.indices.append(offset + i + 1)
+            self.params.append((offset, len(self.vertices) // 3 - offset))
 
         logging.log(logging.INFO, "Mesh loaded: %s" % path)
         logging.log(logging.INFO, "Vertices: %d" % len(self.vertices))

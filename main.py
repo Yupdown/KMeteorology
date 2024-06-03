@@ -85,8 +85,9 @@ def main():
         screen_size = io.display_size
         aspect_ratio = screen_size.x / screen_size.y if screen_size.y != 0.0 else 1.0
 
-        glClearColor(1.0, 1.0, 1.0, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        # color: #1F2025
+        glClearColor(0.12, 0.12, 0.14, 1.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)
         glViewport(0, 0, int(screen_size.x), int(screen_size.y))
 
         imgui.new_frame()
@@ -110,12 +111,39 @@ def main():
         shader_program = shaders["DEFAULT"]
 
         glUseProgram(shader_program.active_shader)
-        
+
         model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
         glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(world_matrix))
 
+        model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
+        # color: #3F4045
+        glUniform4f(model_location, 0.25, 0.25, 0.27, 1.0)
+
         glBindVertexArray(territory_mesh.vao)
-        glDrawElements(GL_LINES, len(territory_mesh.indices), GL_UNSIGNED_INT, None)
+
+        glEnable(GL_STENCIL_TEST)
+        glDisable(GL_DEPTH_TEST)
+
+        glStencilFunc(GL_ALWAYS, 0, 1)
+        glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT)
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE)
+
+        for p in territory_mesh.params:
+            glDrawElements(GL_TRIANGLE_FAN, p[1], GL_UNSIGNED_INT, ctypes.c_void_p(p[0] * 4))
+
+        glStencilFunc(GL_EQUAL, 1, 1)
+        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP)
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE)
+
+        for p in territory_mesh.params:
+            glDrawElements(GL_TRIANGLE_FAN, p[1], GL_UNSIGNED_INT, ctypes.c_void_p(p[0] * 4))
+
+        glDisable(GL_STENCIL_TEST)
+        glEnable(GL_DEPTH_TEST)
+
+        glUniform4f(model_location, 0.65, 0.65, 0.7, 1.0)
+        for p in territory_mesh.params:
+            glDrawElements(GL_LINE_LOOP, p[1], GL_UNSIGNED_INT, ctypes.c_void_p(p[0] * 4))
 
         imgui.render()
         impl.render(imgui.get_draw_data())
@@ -139,6 +167,7 @@ def impl_glfw_init():
     glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
     glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
     glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, GL_TRUE)
+    glfw.window_hint(glfw.STENCIL_BITS, 8)
 
     # Enable Multi Sample Anti Aliasing
     glfw.window_hint(glfw.SAMPLES, 8)

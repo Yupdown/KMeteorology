@@ -2,11 +2,13 @@
 
 uniform sampler2D main_Texture;
 
+uniform vec4 model_Color;
+
 in vec3 vert_Position;
 
 out vec4 out_Color;
 
 void main()
 {
-    out_Color = vec4(0.0, 0.0, 0.0, 1.0);
+    out_Color = model_Color;
 }
