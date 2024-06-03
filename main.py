@@ -14,6 +14,7 @@ import sys
 import mesh
 import shader
 import territory_parser
+import util
 
 # def download_file(file_url, save_path):
 #     with open(save_path, 'wb') as f: # 저장할 파일을 바이너리 쓰기 모드로 열기
@@ -40,11 +41,35 @@ def gen_global_vbo():
     return guid
 
 
+def create_quad():
+    mesh_quad = mesh.Mesh()
+    mesh_quad.vertices = [
+        -1.0, -1.0, 0.0,
+        1.0, -1.0, 0.0,
+        1.0, 1.0, 0.0,
+        -1.0, 1.0, 0.0
+    ]
+    mesh_quad.indices = [
+        0, 1, 2,
+        2, 3, 0
+    ]
+    mesh_quad.gen_buffer()
+    return mesh_quad
+
+
 def main():
     global window
     window = impl_glfw_init()
     imgui.create_context()
     impl = GlfwRenderer(window)
+
+    info_file = open('aws_info.txt', 'r')
+    coordinates = []
+    for line in info_file:
+        if line.startswith('#'):
+            continue
+        info = line.split()
+        coordinates.append(util.convert_coordinate(float(info[1]), float(info[2])))
 
     shaders = dict()
     shaders["DEFAULT"] = shader.Shader("Resources/vertex_default.glsl", "Resources/fragment_default.glsl")
@@ -59,11 +84,12 @@ def main():
 
     mouse_pos_current = (0, 0)
     mouse_pos_last = (0, 0)
-    mouse_pos_drag = (0, 0)
-    mouse_scroll_integral = 0
+    mouse_pos_drag = (-399, -379)
+    mouse_scroll_integral = -10
     current_scale = 1.0
 
     territory_mesh = territory_parser.TerritoryMesh("Resources/territory.svg")
+    quad_mesh = create_quad()
 
     while not glfw.window_should_close(window):
         glfw.poll_events()
@@ -95,9 +121,8 @@ def main():
         scale_factor = 200 - mouse_scroll_integral * 19
 
         world_matrix = glm.scale(glm.mat4(1), glm.vec3(-1.0, -1.0, 1.0))
-        world_matrix = glm.translate(world_matrix, glm.vec3(mouse_pos_drag[0], mouse_pos_drag[1], 0))
 
-        view_matrix = glm.lookAt(glm.vec3(0, 0, -1), glm.vec3(0, 0, 0), glm.vec3(0, 1, 0))
+        view_matrix = glm.lookAt(glm.vec3(mouse_pos_drag[0], mouse_pos_drag[1], -1), glm.vec3(mouse_pos_drag[0], mouse_pos_drag[1], 0), glm.vec3(0, 1, 0))
         projection_matrix = glm.ortho(-aspect_ratio * scale_factor, aspect_ratio * scale_factor, -scale_factor, scale_factor, -1000.0, 1000.0)
 
         # update global uniform buffer
@@ -139,11 +164,25 @@ def main():
             glDrawElements(GL_TRIANGLE_FAN, p[1], GL_UNSIGNED_INT, ctypes.c_void_p(p[0] * 4))
 
         glDisable(GL_STENCIL_TEST)
-        glEnable(GL_DEPTH_TEST)
 
-        glUniform4f(model_location, 0.65, 0.65, 0.7, 1.0)
+        glUniform4f(model_location, 0.75, 0.75, 0.8, 1.0)
         for p in territory_mesh.params:
             glDrawElements(GL_LINE_LOOP, p[1], GL_UNSIGNED_INT, ctypes.c_void_p(p[0] * 4))
+
+        glBindVertexArray(quad_mesh.vao)
+
+        model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
+        glUniform4f(model_location, 0.0, 1.0, 0.0, 1.0)
+        model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
+
+        for p in coordinates:
+            inverse_scale = scale_factor * 0.005
+            model_matrix = glm.translate(glm.mat4(1), glm.vec3(-p[0], -p[1], 0))
+            model_matrix = glm.scale(model_matrix, glm.vec3(inverse_scale, inverse_scale, inverse_scale))
+            glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(model_matrix))
+            glDrawElements(GL_TRIANGLES, len(quad_mesh.indices), GL_UNSIGNED_INT, None)
+
+        glEnable(GL_DEPTH_TEST)
 
         imgui.render()
         impl.render(imgui.get_draw_data())
@@ -155,7 +194,7 @@ def main():
 
 
 def impl_glfw_init():
-    width, height = 1280, 720
+    width, height = 1280, 960
     window_name = "KMeteorology - Weather Data Visualization"
 
     if not glfw.init():

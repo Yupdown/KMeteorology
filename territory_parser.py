@@ -36,7 +36,6 @@ class TerritoryMesh:
 
         self.vertices = []
         self.indices = []
-
         self.params = []
 
         if path:
@@ -49,11 +48,21 @@ class TerritoryMesh:
         glDeleteBuffers(1, [self.ebo])
 
     def load_data(self, path):
+
+        minx = 1e9
+        miny = 1e9
+        maxx = -1e9
+        maxy = -1e9
+
         territories = parse_territory_file(path)
         for territory in territories:
             offset = len(self.vertices) // 3
             for i in range(0, len(territory[1]), 2):
                 self.vertices.extend((territory[1][i], territory[1][i + 1], 0))
+                minx = min(minx, territory[1][i])
+                miny = min(miny, territory[1][i + 1])
+                maxx = max(maxx, territory[1][i])
+                maxy = max(maxy, territory[1][i + 1])
             for i in range(0, len(self.vertices) // 3 - offset):
                 self.indices.append(offset + i)
             self.params.append((offset, len(self.vertices) // 3 - offset))
@@ -61,6 +70,11 @@ class TerritoryMesh:
         logging.log(logging.INFO, "Mesh loaded: %s" % path)
         logging.log(logging.INFO, "Vertices: %d" % len(self.vertices))
         logging.log(logging.INFO, "Indices: %d" % len(self.indices))
+
+        logging.log(logging.INFO, "MinX: %f" % minx)
+        logging.log(logging.INFO, "MinY: %f" % miny)
+        logging.log(logging.INFO, "MaxX: %f" % maxx)
+        logging.log(logging.INFO, "MaxY: %f" % maxy)
 
     def gen_buffer(self):
         self.vao = glGenVertexArrays(1)
