@@ -91,14 +91,13 @@ def main():
 
         imgui.new_frame()
 
-        scale_factor = 0.5 + mouse_scroll_integral * 0.05
+        scale_factor = 200 - mouse_scroll_integral * 19
 
-        world_matrix = glm.scale(glm.mat4(1), glm.vec3(-0.002, -0.002, 0.002))
-        world_matrix = glm.scale(world_matrix, glm.vec3(scale_factor * 4))
+        world_matrix = glm.scale(glm.mat4(1), glm.vec3(-1.0, -1.0, 1.0))
         world_matrix = glm.translate(world_matrix, glm.vec3(mouse_pos_drag[0], mouse_pos_drag[1], 0))
 
         view_matrix = glm.lookAt(glm.vec3(0, 0, -1), glm.vec3(0, 0, 0), glm.vec3(0, 1, 0))
-        projection_matrix = glm.ortho(-aspect_ratio, aspect_ratio, -1.0, 1.0, -10.0, 10.0)
+        projection_matrix = glm.ortho(-aspect_ratio * scale_factor, aspect_ratio * scale_factor, -scale_factor, scale_factor, -1000.0, 1000.0)
 
         # update global uniform buffer
         glBindBuffer(GL_UNIFORM_BUFFER, guid)
@@ -111,7 +110,7 @@ def main():
         shader_program = shaders["DEFAULT"]
 
         glUseProgram(shader_program.active_shader)
-
+        
         model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
         glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(world_matrix))
 
@@ -129,7 +128,7 @@ def main():
 
 def impl_glfw_init():
     width, height = 1280, 720
-    window_name = "VistAsset 3D"
+    window_name = "KMeteorology - Weather Data Visualization"
 
     if not glfw.init():
         logging.error("Could not initialize OpenGL context")
@@ -145,7 +144,7 @@ def impl_glfw_init():
     glfw.window_hint(glfw.SAMPLES, 8)
 
     # Create a windowed mode window and its OpenGL context
-    window = glfw.create_window(int(width), int(height), window_name, None, None)
+    window = glfw.create_window(width, height, window_name, None, None)
     glfw.make_context_current(window)
 
     if not window:

@@ -49,11 +49,11 @@ class TerritoryMesh:
     def load_data(self, path):
         territories = parse_territory_file(path)
         for territory in territories:
+            offset = len(self.vertices) // 3
             for i in range(0, len(territory[1]), 2):
                 self.vertices.extend((territory[1][i], territory[1][i + 1], 0))
-            offset = len(self.vertices) // 3
-            for i in range(0, len(self.vertices) // 3):
-                if i in territory[2]:
+            for i in range(0, len(self.vertices) // 3 - offset):
+                if i + 1 in territory[2]:
                     continue
                 self.indices.append(offset + i)
                 self.indices.append(offset + i + 1)
