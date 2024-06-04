@@ -10,6 +10,7 @@ import imgui
 
 import logging
 import sys
+import time
 
 import mesh
 import shader
@@ -63,13 +64,15 @@ def main():
     imgui.create_context()
     impl = GlfwRenderer(window)
 
+
     info_file = open('aws_info.txt', 'r')
-    coordinates = []
+    points = []
     for line in info_file:
         if line.startswith('#'):
             continue
         info = line.split()
-        coordinates.append(util.convert_coordinate(float(info[1]), float(info[2])))
+        coord = util.transform_coordinate(float(info[1]), float(info[2]))
+        points.append((coord[0], coord[1], info[3], info[8]))
 
     shaders = dict()
     shaders["DEFAULT"] = shader.Shader("Resources/vertex_default.glsl", "Resources/fragment_default.glsl")
@@ -80,13 +83,18 @@ def main():
     guid = gen_global_vbo()
 
     glEnable(GL_MULTISAMPLE)
-    glEnable(GL_DEPTH_TEST)
 
     mouse_pos_current = (0, 0)
     mouse_pos_last = (0, 0)
-    mouse_pos_drag = (-399, -379)
+    moust_pos_delta = (0, 0)
+    mouse_pos_drag = (0, 0)
     mouse_scroll_integral = -10
     current_scale = 1.0
+
+    camera_center = (-399, -379)
+    camera_size = 400
+
+    elapsed_time = time.time()
 
     territory_mesh = territory_parser.TerritoryMesh("Resources/territory.svg")
     quad_mesh = create_quad()
@@ -95,35 +103,57 @@ def main():
         glfw.poll_events()
         impl.process_inputs()
 
+        new_time = time.time()
+        delta_time = new_time - elapsed_time
+        elapsed_time = new_time
+
         io = imgui.get_io()
         mouse_pos_last = mouse_pos_current
         mouse_pos_current = io.mouse_pos.x, io.mouse_pos.y
 
         # if mouse is not captured by imgui, we can drag the model.
-        if not io.want_capture_mouse:
-            if io.mouse_down[0]:
-                mouse_pos_drag = (
-                    mouse_pos_drag[0] + mouse_pos_current[0] - mouse_pos_last[0],
-                    mouse_pos_drag[1] + mouse_pos_current[1] - mouse_pos_last[1])
-            mouse_scroll_integral += io.mouse_wheel
-            mouse_scroll_integral = max(-10, min(10, mouse_scroll_integral))
+        moust_pos_delta = (0, 0)
+        if io.mouse_down[0]:
+            moust_pos_delta = (
+                mouse_pos_current[0] - mouse_pos_last[0],
+                mouse_pos_current[1] - mouse_pos_last[1]
+            )
+            mouse_pos_drag = (
+                mouse_pos_drag[0] + moust_pos_delta[0],
+                mouse_pos_drag[1] + moust_pos_delta[1]
+            )
+        mouse_scroll_integral += io.mouse_wheel
+        mouse_scroll_integral = max(0, min(10, mouse_scroll_integral))
 
         screen_size = io.display_size
         aspect_ratio = screen_size.x / screen_size.y if screen_size.y != 0.0 else 1.0
 
         # color: #1F2025
         glClearColor(0.12, 0.12, 0.14, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)
         glViewport(0, 0, int(screen_size.x), int(screen_size.y))
 
         imgui.new_frame()
 
-        scale_factor = 200 - mouse_scroll_integral * 19
+        if screen_size.y != 0.0:
+            camera_center = (
+                camera_center[0] + moust_pos_delta[0] * 2.0 * camera_size / screen_size.y,
+                camera_center[1] + moust_pos_delta[1] * 2.0 * camera_size / screen_size.y
+            )
+        # clamp camera center
+        camera_center = (
+            max(-800, min(0, camera_center[0])),
+            max(-760, min(0, camera_center[1]))
+        )
+
+        a = camera_size
+        b = 400 * pow(2, mouse_scroll_integral * -0.5)
+        camera_size = a + (b - a) * delta_time * 16.0
 
         world_matrix = glm.scale(glm.mat4(1), glm.vec3(-1.0, -1.0, 1.0))
 
-        view_matrix = glm.lookAt(glm.vec3(mouse_pos_drag[0], mouse_pos_drag[1], -1), glm.vec3(mouse_pos_drag[0], mouse_pos_drag[1], 0), glm.vec3(0, 1, 0))
-        projection_matrix = glm.ortho(-aspect_ratio * scale_factor, aspect_ratio * scale_factor, -scale_factor, scale_factor, -1000.0, 1000.0)
+        view_matrix = glm.lookAt(glm.vec3(camera_center[0], camera_center[1], -1), glm.vec3(camera_center[0], camera_center[1], 0), glm.vec3(0, 1, 0))
+        projection_matrix = glm.ortho(-aspect_ratio * camera_size, aspect_ratio * camera_size, -camera_size, camera_size, -1000.0, 1000.0)
 
         # update global uniform buffer
         glBindBuffer(GL_UNIFORM_BUFFER, guid)
@@ -147,7 +177,6 @@ def main():
         glBindVertexArray(territory_mesh.vao)
 
         glEnable(GL_STENCIL_TEST)
-        glDisable(GL_DEPTH_TEST)
 
         glStencilFunc(GL_ALWAYS, 0, 1)
         glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT)
@@ -172,17 +201,29 @@ def main():
         glBindVertexArray(quad_mesh.vao)
 
         model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
-        glUniform4f(model_location, 0.0, 1.0, 0.0, 1.0)
+        glUniform4f(model_location, 0.0, 0.8, 1.0, 1.0)
         model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
 
-        for p in coordinates:
-            inverse_scale = scale_factor * 0.005
+        viewproj_matrix = projection_matrix * view_matrix
+
+        for i, p in enumerate(points):
+            inverse_scale = camera_size * 0.005
             model_matrix = glm.translate(glm.mat4(1), glm.vec3(-p[0], -p[1], 0))
             model_matrix = glm.scale(model_matrix, glm.vec3(inverse_scale, inverse_scale, inverse_scale))
             glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(model_matrix))
             glDrawElements(GL_TRIANGLES, len(quad_mesh.indices), GL_UNSIGNED_INT, None)
 
-        glEnable(GL_DEPTH_TEST)
+            if p[2][0] != '4':
+                continue
+
+            # draw text of the point (every new window)
+            v = viewproj_matrix * glm.vec3(-p[0], -p[1], 0)
+
+            imgui.set_next_window_position((v.x + 1) * screen_size.x / 2, (-v.y + 1) * screen_size.y / 2)
+            imgui.set_next_window_size(200, 100)
+            imgui.begin("Point %d" % i, False, imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE)
+            imgui.text("AWS: %s" % p[3])
+            imgui.end()
 
         imgui.render()
         impl.render(imgui.get_draw_data())

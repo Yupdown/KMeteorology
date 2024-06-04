@@ -49,20 +49,24 @@ class TerritoryMesh:
 
     def load_data(self, path):
 
-        minx = 1e9
-        miny = 1e9
-        maxx = -1e9
-        maxy = -1e9
+        polar_n = None
+        polar_s = None
+        polar_w = None
+        polar_e = None
 
         territories = parse_territory_file(path)
         for territory in territories:
             offset = len(self.vertices) // 3
             for i in range(0, len(territory[1]), 2):
                 self.vertices.extend((territory[1][i], territory[1][i + 1], 0))
-                minx = min(minx, territory[1][i])
-                miny = min(miny, territory[1][i + 1])
-                maxx = max(maxx, territory[1][i])
-                maxy = max(maxy, territory[1][i + 1])
+                if polar_n is None or territory[1][i + 1] > polar_n[1]:
+                    polar_n = (territory[1][i], territory[1][i + 1])
+                if polar_s is None or territory[1][i + 1] < polar_s[1]:
+                    polar_s = (territory[1][i], territory[1][i + 1])
+                if polar_w is None or territory[1][i] < polar_w[0]:
+                    polar_w = (territory[1][i], territory[1][i + 1])
+                if polar_e is None or territory[1][i] > polar_e[0]:
+                    polar_e = (territory[1][i], territory[1][i + 1])
             for i in range(0, len(self.vertices) // 3 - offset):
                 self.indices.append(offset + i)
             self.params.append((offset, len(self.vertices) // 3 - offset))
@@ -71,10 +75,10 @@ class TerritoryMesh:
         logging.log(logging.INFO, "Vertices: %d" % len(self.vertices))
         logging.log(logging.INFO, "Indices: %d" % len(self.indices))
 
-        logging.log(logging.INFO, "MinX: %f" % minx)
-        logging.log(logging.INFO, "MinY: %f" % miny)
-        logging.log(logging.INFO, "MaxX: %f" % maxx)
-        logging.log(logging.INFO, "MaxY: %f" % maxy)
+        logging.log(logging.INFO, "Polar N: %s" % str(polar_n))
+        logging.log(logging.INFO, "Polar S: %s" % str(polar_s))
+        logging.log(logging.INFO, "Polar W: %s" % str(polar_w))
+        logging.log(logging.INFO, "Polar E: %s" % str(polar_e))
 
     def gen_buffer(self):
         self.vao = glGenVertexArrays(1)
