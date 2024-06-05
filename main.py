@@ -1,5 +1,4 @@
-import requests  # requests 모듈 임포트
-import time  # time 모듈 임포트
+import datetime
 
 from imgui.integrations.glfw import GlfwRenderer
 from OpenGL.GL import *
@@ -11,26 +10,56 @@ import imgui
 import logging
 import sys
 import time
+import math
+from array import array
 
 import mesh
 import shader
 import territory_parser
 import util
-
-# def download_file(file_url, save_path):
-#     with open(save_path, 'wb') as f: # 저장할 파일을 바이너리 쓰기 모드로 열기
-#         response = requests.get(file_url) # 파일 URL에 GET 요청 보내기
-#         f.write(response.content) # 응답의 내용을 파일에 쓰기
-#
-# url = f'https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?stn=0&disp=1&help=1&authKey=Ud0jPfajTAWdIz32o5wFcg'
-# save_file_path = 'output_file.txt'
-#
-# # 파일 다운로드 함수를 호출합니다.
-# download_file(url, save_file_path)
+import weather_data
+from aws_point import AWSPoint
 
 
 # set logging level
 logging.basicConfig(level=logging.INFO)
+scroll_y = 0.0
+
+
+def impl_glfw_init():
+    width, height = 1280, 960
+    window_name = "KMeteorology - Weather Data Visualization"
+
+    if not glfw.init():
+        logging.error("Could not initialize OpenGL context")
+        sys.exit(1)
+
+    # OS X supports only forward-compatible core profiles from 3.2
+    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+    glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+    glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, GL_TRUE)
+    glfw.window_hint(glfw.STENCIL_BITS, 8)
+
+    # Enable Multi Sample Anti Aliasing
+    glfw.window_hint(glfw.SAMPLES, 8)
+
+    # Create a windowed mode window and its OpenGL context
+    window = glfw.create_window(width, height, window_name, None, None)
+    glfw.make_context_current(window)
+
+    if not window:
+        glfw.terminate()
+        logging.error("Could not initialize Window")
+        sys.exit(1)
+
+    return window
+
+
+def scroll_callback(window, xoffset, yoffset):
+    global scroll_y
+    scroll_y += yoffset
+    scroll_y = max(0, min(15, scroll_y))
 
 
 def gen_global_vbo():
@@ -62,17 +91,23 @@ def main():
     global window
     window = impl_glfw_init()
     imgui.create_context()
+    font_header = imgui.get_io().fonts.add_font_from_file_ttf("Resources/naru.ttf", 24, None, imgui.get_io().fonts.get_glyph_ranges_korean())
+    font_body = imgui.get_io().fonts.add_font_from_file_ttf("Resources/naru.ttf", 16, None, imgui.get_io().fonts.get_glyph_ranges_korean())
     impl = GlfwRenderer(window)
 
+    glfw.set_scroll_callback(window, scroll_callback)
 
     info_file = open('aws_info.txt', 'r')
-    points = []
+    points = {}
     for line in info_file:
         if line.startswith('#'):
             continue
         info = line.split()
-        coord = util.transform_coordinate(float(info[1]), float(info[2]))
-        points.append((coord[0], coord[1], info[3], info[8]))
+        point = AWSPoint(info)
+        points[point.id] = point
+    weather_data.initialize()
+    for p in points.values():
+        p.initialize_data(weather_data)
 
     shaders = dict()
     shaders["DEFAULT"] = shader.Shader("Resources/vertex_default.glsl", "Resources/fragment_default.glsl")
@@ -88,7 +123,6 @@ def main():
     mouse_pos_last = (0, 0)
     moust_pos_delta = (0, 0)
     mouse_pos_drag = (0, 0)
-    mouse_scroll_integral = -10
     current_scale = 1.0
 
     camera_center = (-399, -379)
@@ -107,13 +141,11 @@ def main():
         delta_time = new_time - elapsed_time
         elapsed_time = new_time
 
-        io = imgui.get_io()
         mouse_pos_last = mouse_pos_current
-        mouse_pos_current = io.mouse_pos.x, io.mouse_pos.y
+        mouse_pos_current = glfw.get_cursor_pos(window)
 
-        # if mouse is not captured by imgui, we can drag the model.
         moust_pos_delta = (0, 0)
-        if io.mouse_down[0]:
+        if glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS:
             moust_pos_delta = (
                 mouse_pos_current[0] - mouse_pos_last[0],
                 mouse_pos_current[1] - mouse_pos_last[1]
@@ -122,10 +154,8 @@ def main():
                 mouse_pos_drag[0] + moust_pos_delta[0],
                 mouse_pos_drag[1] + moust_pos_delta[1]
             )
-        mouse_scroll_integral += io.mouse_wheel
-        mouse_scroll_integral = max(0, min(10, mouse_scroll_integral))
 
-        screen_size = io.display_size
+        screen_size = glm.vec2(glfw.get_framebuffer_size(window))
         aspect_ratio = screen_size.x / screen_size.y if screen_size.y != 0.0 else 1.0
 
         # color: #1F2025
@@ -134,6 +164,7 @@ def main():
         glViewport(0, 0, int(screen_size.x), int(screen_size.y))
 
         imgui.new_frame()
+        imgui.push_font(font_body)
 
         if screen_size.y != 0.0:
             camera_center = (
@@ -147,7 +178,7 @@ def main():
         )
 
         a = camera_size
-        b = 400 * pow(2, mouse_scroll_integral * -0.5)
+        b = 400 * pow(2, scroll_y * -0.5)
         camera_size = a + (b - a) * delta_time * 16.0
 
         world_matrix = glm.scale(glm.mat4(1), glm.vec3(-1.0, -1.0, 1.0))
@@ -200,68 +231,71 @@ def main():
 
         glBindVertexArray(quad_mesh.vao)
 
-        model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
-        glUniform4f(model_location, 0.0, 0.8, 1.0, 1.0)
-        model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
-
         viewproj_matrix = projection_matrix * view_matrix
 
-        for i, p in enumerate(points):
+        for p in points.values():
             inverse_scale = camera_size * 0.005
-            model_matrix = glm.translate(glm.mat4(1), glm.vec3(-p[0], -p[1], 0))
+            model_matrix = glm.translate(glm.mat4(1), glm.vec3(-p.x, -p.y, 0))
             model_matrix = glm.scale(model_matrix, glm.vec3(inverse_scale, inverse_scale, inverse_scale))
+
+            point_active = p.id in weather_data.data_hoursofday[23]
+            point_type = p.code[0] == '4'
+
+            model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
+            if point_active:
+                # #4CFB2E
+                if point_type:
+                    glUniform4f(model_location, 0.0, 0.5, 1.0, 1.0)
+                else:
+                    glUniform4f(model_location, 0.3, 0.98, 0.18, 1.0)
+            else:
+                glUniform4f(model_location, 0.8, 0.0, 0.0, 1.0)
+            model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
             glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(model_matrix))
+
             glDrawElements(GL_TRIANGLES, len(quad_mesh.indices), GL_UNSIGNED_INT, None)
 
-            if p[2][0] != '4':
+            if scroll_y < 4 or (scroll_y < 8 and not point_type):
+                p.reset_imgui()
                 continue
 
             # draw text of the point (every new window)
-            v = viewproj_matrix * glm.vec3(-p[0], -p[1], 0)
+            p.draw_imgui(viewproj_matrix, screen_size, delta_time)
 
-            imgui.set_next_window_position((v.x + 1) * screen_size.x / 2, (-v.y + 1) * screen_size.y / 2)
-            imgui.set_next_window_size(200, 100)
-            imgui.begin("Point %d" % i, False, imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE)
-            imgui.text("AWS: %s" % p[3])
-            imgui.end()
+        imgui.pop_font()
+        imgui.push_font(font_header)
 
+        # Show the Title of the Application (font size: 24)
+        imgui.set_next_window_position(4, 4)
+        imgui.begin("Title", False, imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE | imgui.WINDOW_ALWAYS_AUTO_RESIZE)
+        imgui.text("KMeteorology - AWS 기상 자료 시각화")
+
+        imgui.pop_font()
+        imgui.push_font(font_body)
+
+        # Show the current time
+        time_str = weather_data.time_criteria.strftime("%Y-%m-%d %H:%M")
+        imgui.separator()
+        imgui.text("기준 시간: %s" % time_str)
+        imgui.end()
+
+        # Show the AWS Information (font size: 16)
+        content_size = (400, 300)
+        imgui.set_next_window_position(screen_size.x - 4 - content_size[0], screen_size.y - 4 - content_size[1])
+        imgui.set_next_window_size(content_size[0], content_size[1])
+        imgui.begin("AWS Information", False, imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE)
+        imgui.text("AWS 정보")
+        imgui.separator()
+        imgui.text("AWS 정보를 표시합니다.")
+        imgui.end()
+
+        imgui.pop_font()
         imgui.render()
         impl.render(imgui.get_draw_data())
-
         glfw.swap_buffers(window)
 
     impl.shutdown()
     glfw.terminate()
-
-
-def impl_glfw_init():
-    width, height = 1280, 960
-    window_name = "KMeteorology - Weather Data Visualization"
-
-    if not glfw.init():
-        logging.error("Could not initialize OpenGL context")
-        sys.exit(1)
-
-    # OS X supports only forward-compatible core profiles from 3.2
-    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
-    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
-    glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-    glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, GL_TRUE)
-    glfw.window_hint(glfw.STENCIL_BITS, 8)
-
-    # Enable Multi Sample Anti Aliasing
-    glfw.window_hint(glfw.SAMPLES, 8)
-
-    # Create a windowed mode window and its OpenGL context
-    window = glfw.create_window(width, height, window_name, None, None)
-    glfw.make_context_current(window)
-
-    if not window:
-        glfw.terminate()
-        logging.error("Could not initialize Window")
-        sys.exit(1)
-
-    return window
 
 
 if __name__ == "__main__":
