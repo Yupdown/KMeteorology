@@ -21,6 +21,7 @@ def load_cached_files():
 
 def download_file(file_url, filename):
     path = cache_directory + '/' + filename
+    print('Downloading: %s' % filename)
     with open(path, 'wb') as f: # 저장할 파일을 바이너리 쓰기 모드로 열기
         response = requests.get(file_url) # 파일 URL에 GET 요청 보내기
         f.write(response.content) # 응답의 내용을 파일에 쓰기
@@ -32,6 +33,8 @@ def get_file(time_str):
     if filename not in data_cache:
         url = 'https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?stn=0&tm2=%s&disp=1&help=1&authKey=Ud0jPfajTAWdIz32o5wFcg' % time_str
         download_file(url, filename)
+    else:
+        print('Using cached file: %s' % filename)
     return data_cache[filename]
 
 

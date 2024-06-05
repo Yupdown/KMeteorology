@@ -47,3 +47,11 @@ def transform_coordinate(x_A, y_A):
     A_coord = np.array([x_A, y_A])
     B_coord = transformation[index][0].dot(A_coord) + transformation[index][1]
     return B_coord
+
+
+# 8 directions
+direction_str = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+
+
+def get_direction(wd):
+    return direction_str[int((wd + 22.5) / 45) % 8] if not np.isnan(wd) else 'nan'

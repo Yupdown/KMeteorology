@@ -41,17 +41,18 @@ class AWSPoint:
         self.w = self.w + (200 - self.w) * delta_time * 10
 
         imgui.set_next_window_position(sv.x, sv.y)
-        imgui.set_next_window_size(self.w, 205)
-        imgui.begin(f'[{self.id}] {self.name}', False, imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE | imgui.WINDOW_NO_BRING_TO_FRONT_ON_FOCUS)
-
-        plot_size = (max(self.w - 100, 10), 30)
-
+        imgui.set_next_window_size(self.w, 210)
+        imgui.begin(self.id, False, imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE | imgui.WINDOW_NO_BRING_TO_FRONT_ON_FOCUS | imgui.WINDOW_NO_MOUSE_INPUTS)
+        imgui.text(f'[{self.id}] {self.name}')
+        imgui.separator()
+        plot_size = (max(self.w - 120, 10), 30)
         if self.has_data:
-            imgui.plot_lines("%.1f°C" % self.array_data['TA'][23], self.array_data['TA'], graph_size=plot_size)
-            imgui.plot_histogram("%.1fmm" % self.array_data['RN-DAY'][23], self.array_data['RN-60m'], scale_min=0, scale_max=40, graph_size=plot_size)
-            imgui.plot_lines("%.1f%%" % self.array_data['HM'][23], self.array_data['HM'], scale_min=0, scale_max=100, graph_size=plot_size)
-            imgui.plot_lines("%.1fm/s" % self.array_data['WS10'][23], self.array_data['WS10'], scale_min=0, scale_max=10, graph_size=plot_size)
-            imgui.plot_lines("%.1fhPa" % self.array_data['PS'][23], self.array_data['PS'], graph_size=plot_size)
+            direction = util.get_direction(self.array_data['WD10'][-1])
+            imgui.plot_lines("%.1f°C" % self.array_data['TA'][-1], self.array_data['TA'], graph_size=plot_size)
+            imgui.plot_histogram("%.1fmm" % self.array_data['RN-DAY'][-1], self.array_data['RN-60m'], scale_min=0, scale_max=40, graph_size=plot_size)
+            imgui.plot_lines("%.1f%%" % self.array_data['HM'][-1], self.array_data['HM'], scale_min=0, scale_max=100, graph_size=plot_size)
+            imgui.plot_lines("%.1fm/s (%s)" % (self.array_data['WS10'][-1], direction), self.array_data['WS10'], scale_min=0, scale_max=10, graph_size=plot_size)
+            imgui.plot_lines("%.1fhPa" % self.array_data['PS'][-1], self.array_data['PS'], graph_size=plot_size)
         else:
             imgui.text("No Data")
 

@@ -10,8 +10,11 @@ layout(std140, binding = 0) uniform GlobalUniform
 
 uniform mat4 model_Transform;
 
+out vec2 uv_Coords;
+
 void main()
 {
 	vec3 vert_Position = vec3(model_Transform * vec4(in_Position, 1.0));
 	gl_Position = proj_Transform * view_Transform * vec4(vert_Position, 1.0);
+	uv_Coords = gl_Position.xy * 0.5 + 0.5;
 }

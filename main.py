@@ -10,21 +10,26 @@ import imgui
 import logging
 import sys
 import time
-import math
-from array import array
 
 import mesh
 import shader
 import territory_parser
-import util
 import weather_data
 from aws_point import AWSPoint
 
 
+radio_params = (
+    ("TA", "기온"),
+    ("HM", "습도"),
+    ("WS10", "풍속"),
+    ("PS", "기압"),
+    ("RN-60m", "강수량")
+)
+selected_type = radio_params[0][0]
+
 # set logging level
 logging.basicConfig(level=logging.INFO)
 scroll_y = 0.0
-
 
 def impl_glfw_init():
     width, height = 1280, 960
@@ -86,15 +91,74 @@ def create_quad():
     mesh_quad.gen_buffer()
     return mesh_quad
 
+texture = None
+tw, th = 32, 32
+fbo = None
+rbo = None
+
+
+def resize_render_target(width, height):
+    global texture
+
+    glBindTexture(GL_TEXTURE_2D, texture)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tw, th, 0, GL_RGB, GL_UNSIGNED_BYTE, None)
+
+    glBindRenderbuffer(GL_RENDERBUFFER, rbo)
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, tw, th)
+
+    glBindTexture(GL_TEXTURE_2D, 0)
+    glBindRenderbuffer(GL_RENDERBUFFER, 0)
+
+
+def create_render_target(width, height):
+    global texture, fbo, rbo
+
+    fbo = glGenFramebuffers(1)
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo)
+
+    texture = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, texture)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, None)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0)
+
+    rbo = glGenRenderbuffers(1)
+    glBindRenderbuffer(GL_RENDERBUFFER, rbo)
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height)
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo)
+
+    if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
+        logging.error("Framebuffer is not complete!")
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    glBindTexture(GL_TEXTURE_2D, 0)
+    glBindRenderbuffer(GL_RENDERBUFFER, 0)
+
+
+def window_resize_callback(window, width, height):
+    global tw, th
+    if height == 0:
+        return
+
+    aspect_ratio = width / height
+    tw = int(32 * aspect_ratio)
+    th = 32
+
+    # resize the texture
+    if texture:
+        resize_render_target(tw, th)
+
 
 def main():
-    global window
+    global window, selected_type
     window = impl_glfw_init()
     imgui.create_context()
     font_header = imgui.get_io().fonts.add_font_from_file_ttf("Resources/naru.ttf", 24, None, imgui.get_io().fonts.get_glyph_ranges_korean())
     font_body = imgui.get_io().fonts.add_font_from_file_ttf("Resources/naru.ttf", 16, None, imgui.get_io().fonts.get_glyph_ranges_korean())
     impl = GlfwRenderer(window)
 
+    glfw.set_window_size_callback(window, window_resize_callback)
     glfw.set_scroll_callback(window, scroll_callback)
 
     info_file = open('aws_info.txt', 'r')
@@ -109,8 +173,11 @@ def main():
     for p in points.values():
         p.initialize_data(weather_data)
 
+    create_render_target(tw, th)
     shaders = dict()
     shaders["DEFAULT"] = shader.Shader("Resources/vertex_default.glsl", "Resources/fragment_default.glsl")
+    shaders["TERRITORY"] = shader.Shader("Resources/vertex_territory.glsl", "Resources/fragment_territory.glsl")
+    shaders["HEATMAP"] = shader.Shader("Resources/vertex_heatmap.glsl", "Resources/fragment_heatmap.glsl")
 
     for shader_program in shaders.values():
         shader_program.load_shaders()
@@ -124,6 +191,7 @@ def main():
     moust_pos_delta = (0, 0)
     mouse_pos_drag = (0, 0)
     current_scale = 1.0
+    time_factor = 1.0
 
     camera_center = (-399, -379)
     camera_size = 400
@@ -144,27 +212,20 @@ def main():
         mouse_pos_last = mouse_pos_current
         mouse_pos_current = glfw.get_cursor_pos(window)
 
-        moust_pos_delta = (0, 0)
-        if glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS:
-            moust_pos_delta = (
-                mouse_pos_current[0] - mouse_pos_last[0],
-                mouse_pos_current[1] - mouse_pos_last[1]
-            )
-            mouse_pos_drag = (
-                mouse_pos_drag[0] + moust_pos_delta[0],
-                mouse_pos_drag[1] + moust_pos_delta[1]
-            )
+        if not imgui.get_io().want_capture_mouse:
+            moust_pos_delta = (0, 0)
+            if glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS:
+                moust_pos_delta = (
+                    mouse_pos_current[0] - mouse_pos_last[0],
+                    mouse_pos_current[1] - mouse_pos_last[1]
+                )
+                mouse_pos_drag = (
+                    mouse_pos_drag[0] + moust_pos_delta[0],
+                    mouse_pos_drag[1] + moust_pos_delta[1]
+                )
 
         screen_size = glm.vec2(glfw.get_framebuffer_size(window))
         aspect_ratio = screen_size.x / screen_size.y if screen_size.y != 0.0 else 1.0
-
-        # color: #1F2025
-        glClearColor(0.12, 0.12, 0.14, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)
-        glViewport(0, 0, int(screen_size.x), int(screen_size.y))
-
-        imgui.new_frame()
-        imgui.push_font(font_body)
 
         if screen_size.y != 0.0:
             camera_center = (
@@ -186,27 +247,50 @@ def main():
         view_matrix = glm.lookAt(glm.vec3(camera_center[0], camera_center[1], -1), glm.vec3(camera_center[0], camera_center[1], 0), glm.vec3(0, 1, 0))
         projection_matrix = glm.ortho(-aspect_ratio * camera_size, aspect_ratio * camera_size, -camera_size, camera_size, -1000.0, 1000.0)
 
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+
         # update global uniform buffer
         glBindBuffer(GL_UNIFORM_BUFFER, guid)
         glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, glm.value_ptr(view_matrix))
         glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, glm.value_ptr(projection_matrix))
         glBindBuffer(GL_UNIFORM_BUFFER, 0)
 
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+        # First Pass
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo)
+        glClearColor(0.0, 0.0, 0.0, 1.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        shader_program = shaders["DEFAULT"]
+        glViewport(0, 0, tw, th)
 
+        shader_program = shaders["HEATMAP"]
+        glUseProgram(shader_program.active_shader)
+
+        glBindVertexArray(quad_mesh.vao)
+        glDrawElements(GL_TRIANGLES, len(quad_mesh.indices), GL_UNSIGNED_INT, None)
+
+        # Second Pass
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        glBindTexture(GL_TEXTURE_2D, texture)
+
+        # color: #1F2025
+        glClearColor(0.12, 0.12, 0.14, 1.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)
+        glViewport(0, 0, int(screen_size.x), int(screen_size.y))
+
+        imgui.new_frame()
+        imgui.push_font(font_body)
+
+        shader_program = shaders["TERRITORY"]
         glUseProgram(shader_program.active_shader)
 
         model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
         glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(world_matrix))
 
-        model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
-        # color: #3F4045
-        glUniform4f(model_location, 0.25, 0.25, 0.27, 1.0)
+        # model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
+        # # color: #3F4045
+        # glUniform4f(model_location, 0.25, 0.25, 0.27, 1.0)
 
         glBindVertexArray(territory_mesh.vao)
-
         glEnable(GL_STENCIL_TEST)
 
         glStencilFunc(GL_ALWAYS, 0, 1)
@@ -223,9 +307,16 @@ def main():
         for p in territory_mesh.params:
             glDrawElements(GL_TRIANGLE_FAN, p[1], GL_UNSIGNED_INT, ctypes.c_void_p(p[0] * 4))
 
+        shader_program = shaders["DEFAULT"]
+        glUseProgram(shader_program.active_shader)
         glDisable(GL_STENCIL_TEST)
 
+        model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
+        glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(world_matrix))
+
+        model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
         glUniform4f(model_location, 0.75, 0.75, 0.8, 1.0)
+
         for p in territory_mesh.params:
             glDrawElements(GL_LINE_LOOP, p[1], GL_UNSIGNED_INT, ctypes.c_void_p(p[0] * 4))
 
@@ -243,11 +334,10 @@ def main():
 
             model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
             if point_active:
-                # #4CFB2E
                 if point_type:
-                    glUniform4f(model_location, 0.0, 0.5, 1.0, 1.0)
-                else:
                     glUniform4f(model_location, 0.3, 0.98, 0.18, 1.0)
+                else:
+                    glUniform4f(model_location, 0.0, 0.3, 0.9, 1.0)
             else:
                 glUniform4f(model_location, 0.8, 0.0, 0.0, 1.0)
             model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
@@ -280,13 +370,37 @@ def main():
         imgui.end()
 
         # Show the AWS Information (font size: 16)
-        content_size = (400, 300)
+        content_size = (400, 320)
         imgui.set_next_window_position(screen_size.x - 4 - content_size[0], screen_size.y - 4 - content_size[1])
         imgui.set_next_window_size(content_size[0], content_size[1])
         imgui.begin("AWS Information", False, imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE)
-        imgui.text("AWS 정보")
+        imgui.text("AWS 그래프 자료")
+
+        imgui.spacing()
+        imgui.spacing()
+        imgui.spacing()
+
         imgui.separator()
-        imgui.text("AWS 정보를 표시합니다.")
+        imgui.text('Control')
+        imgui.spacing()
+        imgui.spacing()
+        time_factor = imgui.slider_float('Time Factor', time_factor, 0, 1, '')[1]
+        hours_delta = 24 * (1 - time_factor)
+        lerped_time = weather_data.time_criteria - datetime.timedelta(hours=hours_delta)
+        imgui.text('Time: %s' % lerped_time.strftime('%Y-%m-%d %H:%M'))
+
+        imgui.spacing()
+        imgui.spacing()
+        imgui.spacing()
+
+        imgui.separator()
+        imgui.text('Mode')
+        imgui.spacing()
+        imgui.spacing()
+        for param in radio_params:
+            clicked = imgui.radio_button(f'{param[0]} : {param[1]}', selected_type == param[0])
+            if clicked:
+                selected_type = param[0]
         imgui.end()
 
         imgui.pop_font()

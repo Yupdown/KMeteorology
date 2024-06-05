@@ -59,9 +59,9 @@ class TerritoryMesh:
             offset = len(self.vertices) // 3
             for i in range(0, len(territory[1]), 2):
                 self.vertices.extend((territory[1][i], territory[1][i + 1], 0))
-                if polar_n is None or territory[1][i + 1] > polar_n[1]:
+                if polar_n is None or territory[1][i + 1] < polar_n[1]:
                     polar_n = (territory[1][i], territory[1][i + 1])
-                if polar_s is None or territory[1][i + 1] < polar_s[1]:
+                if polar_s is None or territory[1][i + 1] > polar_s[1]:
                     polar_s = (territory[1][i], territory[1][i + 1])
                 if polar_w is None or territory[1][i] < polar_w[0]:
                     polar_w = (territory[1][i], territory[1][i + 1])
