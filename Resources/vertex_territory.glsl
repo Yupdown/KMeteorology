@@ -6,6 +6,7 @@ layout(std140, binding = 0) uniform GlobalUniform
 {
 	mat4 view_Transform;
 	mat4 proj_Transform;
+	mat4 viewproj_TransformInv;
 };
 
 uniform mat4 model_Transform;

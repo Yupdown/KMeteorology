@@ -2,6 +2,8 @@ import datetime
 
 from imgui.integrations.glfw import GlfwRenderer
 from OpenGL.GL import *
+import PIL.Image
+
 import glm
 import glfw
 
@@ -10,6 +12,7 @@ import imgui
 import logging
 import sys
 import time
+import numpy as np
 
 import mesh
 import shader
@@ -18,21 +21,15 @@ import weather_data
 from aws_point import AWSPoint
 
 
-radio_params = (
-    ("TA", "기온"),
-    ("HM", "습도"),
-    ("WS10", "풍속"),
-    ("PS", "기압"),
-    ("RN-60m", "강수량")
-)
-selected_type = radio_params[0][0]
+toggle_distribution = False
+selected_type = 'TA'
 
 # set logging level
 logging.basicConfig(level=logging.INFO)
 scroll_y = 0.0
 
 def impl_glfw_init():
-    width, height = 1280, 960
+    width, height = 960, 960
     window_name = "KMeteorology - Weather Data Visualization"
 
     if not glfw.init():
@@ -70,7 +67,7 @@ def scroll_callback(window, xoffset, yoffset):
 def gen_global_vbo():
     guid = glGenBuffers(1)
     glBindBuffer(GL_UNIFORM_BUFFER, guid)
-    glBufferData(GL_UNIFORM_BUFFER, 128, None, GL_STATIC_DRAW)
+    glBufferData(GL_UNIFORM_BUFFER, 192, None, GL_STATIC_DRAW)
     glBindBuffer(GL_UNIFORM_BUFFER, 0)
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, guid)
     return guid
@@ -92,7 +89,7 @@ def create_quad():
     return mesh_quad
 
 texture = None
-tw, th = 32, 32
+tw, th = 64, 64
 fbo = None
 rbo = None
 
@@ -108,6 +105,19 @@ def resize_render_target(width, height):
 
     glBindTexture(GL_TEXTURE_2D, 0)
     glBindRenderbuffer(GL_RENDERBUFFER, 0)
+
+
+def load_texture(file):
+    image = PIL.Image.open(file)
+    img_data = np.array(list(image.getdata()), np.uint8)
+    width, height = image.size
+    texture = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, texture)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img_data)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+    glGenerateMipmap(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, 0)
+    return texture
 
 
 def create_render_target(width, height):
@@ -142,8 +152,8 @@ def window_resize_callback(window, width, height):
         return
 
     aspect_ratio = width / height
-    tw = int(32 * aspect_ratio)
-    th = 32
+    tw = int(64 * aspect_ratio)
+    th = 64
 
     # resize the texture
     if texture:
@@ -151,7 +161,7 @@ def window_resize_callback(window, width, height):
 
 
 def main():
-    global window, selected_type
+    global window, selected_type, toggle_distribution
     window = impl_glfw_init()
     imgui.create_context()
     font_header = imgui.get_io().fonts.add_font_from_file_ttf("Resources/naru.ttf", 24, None, imgui.get_io().fonts.get_glyph_ranges_korean())
@@ -163,21 +173,33 @@ def main():
 
     info_file = open('aws_info.txt', 'r')
     points = {}
+    points_primary = {}
+    sizeof_primary = 114
     for line in info_file:
         if line.startswith('#'):
             continue
         info = line.split()
         point = AWSPoint(info)
         points[point.id] = point
+        if len(points_primary) < sizeof_primary:
+            points_primary[point.id] = point
     weather_data.initialize()
     for p in points.values():
         p.initialize_data(weather_data)
 
+    palette = [load_texture(f"Resources/palette{i}.png") for i in range(3)]
     create_render_target(tw, th)
     shaders = dict()
     shaders["DEFAULT"] = shader.Shader("Resources/vertex_default.glsl", "Resources/fragment_default.glsl")
     shaders["TERRITORY"] = shader.Shader("Resources/vertex_territory.glsl", "Resources/fragment_territory.glsl")
     shaders["HEATMAP"] = shader.Shader("Resources/vertex_heatmap.glsl", "Resources/fragment_heatmap.glsl")
+
+    distribution_types = dict()
+    distribution_types["TA"] = {'id': 'TA', 'name': '기온', 'range': (5, 35), 'palette': 0}
+    distribution_types["HM"] = {'id': 'HM', 'name': '습도', 'range': (0, 100), 'palette': 2}
+    distribution_types["WS10"] = {'id': 'WS10', 'name': '풍속', 'range': (0, 60), 'palette': 1}
+    distribution_types["PS"] = {'id': 'PS', 'name': '기압', 'range': (995, 1025), 'palette': 0}
+    distribution_types["RN-60m"] = {'id': 'RN-60m', 'name': '강수량', 'range': (0, 100), 'palette': 1}
 
     for shader_program in shaders.values():
         shader_program.load_shaders()
@@ -200,6 +222,15 @@ def main():
 
     territory_mesh = territory_parser.TerritoryMesh("Resources/territory.svg")
     quad_mesh = create_quad()
+
+    model_location = glGetUniformLocation(shaders["HEATMAP"].active_shader, "u_PointCount")
+    glUniform1i(model_location, sizeof_primary)
+
+    u_PointCoords = np.array([[p.x, p.y] for p in points_primary.values()], dtype=np.float32)
+    model_location = glGetUniformLocation(shaders["HEATMAP"].active_shader, "u_PointCoords")
+    glUniform2fv(model_location, sizeof_primary, u_PointCoords)
+
+    glUseProgram(0)
 
     while not glfw.window_should_close(window):
         glfw.poll_events()
@@ -246,6 +277,7 @@ def main():
 
         view_matrix = glm.lookAt(glm.vec3(camera_center[0], camera_center[1], -1), glm.vec3(camera_center[0], camera_center[1], 0), glm.vec3(0, 1, 0))
         projection_matrix = glm.ortho(-aspect_ratio * camera_size, aspect_ratio * camera_size, -camera_size, camera_size, -1000.0, 1000.0)
+        viewprojinv_matrix = glm.inverse(projection_matrix * view_matrix)
 
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
@@ -253,10 +285,13 @@ def main():
         glBindBuffer(GL_UNIFORM_BUFFER, guid)
         glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, glm.value_ptr(view_matrix))
         glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, glm.value_ptr(projection_matrix))
+        glBufferSubData(GL_UNIFORM_BUFFER, 128, 64, glm.value_ptr(viewprojinv_matrix))
         glBindBuffer(GL_UNIFORM_BUFFER, 0)
 
         # First Pass
         glBindFramebuffer(GL_FRAMEBUFFER, fbo)
+        glBindTexture(GL_TEXTURE_2D, palette[distribution_types[selected_type]['palette']])
+
         glClearColor(0.0, 0.0, 0.0, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
@@ -264,6 +299,24 @@ def main():
 
         shader_program = shaders["HEATMAP"]
         glUseProgram(shader_program.active_shader)
+
+        model_location = glGetUniformLocation(shaders["HEATMAP"].active_shader, "u_PointValueRange")
+        glUniform2f(model_location, *distribution_types[selected_type]['range'])
+
+        arr = []
+        for p in points_primary.values():
+            if p.has_data:
+                value = p.get_slerped_data(selected_type, time_factor * 23)
+                # if it's not a number, set it to 0
+                if np.isnan(value):
+                    value = -50.0
+                arr.append(value)
+            else:
+                arr.append(0.0)
+
+        model_location = glGetUniformLocation(shader_program.active_shader, "u_PointValues")
+        u_PointValues = np.array(arr, dtype=np.float32)
+        glUniform1fv(model_location, sizeof_primary, u_PointValues)
 
         glBindVertexArray(quad_mesh.vao)
         glDrawElements(GL_TRIANGLES, len(quad_mesh.indices), GL_UNSIGNED_INT, None)
@@ -280,15 +333,16 @@ def main():
         imgui.new_frame()
         imgui.push_font(font_body)
 
-        shader_program = shaders["TERRITORY"]
+        shader_program = shaders["TERRITORY"] if toggle_distribution else shaders["DEFAULT"]
         glUseProgram(shader_program.active_shader)
 
         model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
         glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(world_matrix))
 
-        # model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
-        # # color: #3F4045
-        # glUniform4f(model_location, 0.25, 0.25, 0.27, 1.0)
+        if not toggle_distribution:
+            model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
+            # color: #3F4045
+            glUniform4f(model_location, 0.25, 0.25, 0.27, 1.0)
 
         glBindVertexArray(territory_mesh.vao)
         glEnable(GL_STENCIL_TEST)
@@ -329,7 +383,7 @@ def main():
             model_matrix = glm.translate(glm.mat4(1), glm.vec3(-p.x, -p.y, 0))
             model_matrix = glm.scale(model_matrix, glm.vec3(inverse_scale, inverse_scale, inverse_scale))
 
-            point_active = p.id in weather_data.data_hoursofday[23]
+            point_active = p.id in weather_data.data_hoursofday[-1]
             point_type = p.code[0] == '4'
 
             model_location = glGetUniformLocation(shader_program.active_shader, "model_Color")
@@ -337,7 +391,7 @@ def main():
                 if point_type:
                     glUniform4f(model_location, 0.3, 0.98, 0.18, 1.0)
                 else:
-                    glUniform4f(model_location, 0.0, 0.3, 0.9, 1.0)
+                    glUniform4f(model_location, 0.2, 0.5, 1.0, 1.0)
             else:
                 glUniform4f(model_location, 0.8, 0.0, 0.0, 1.0)
             model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
@@ -350,7 +404,7 @@ def main():
                 continue
 
             # draw text of the point (every new window)
-            p.draw_imgui(viewproj_matrix, screen_size, delta_time)
+            p.draw_imgui(viewproj_matrix, screen_size, time_factor * 23, delta_time)
 
         imgui.pop_font()
         imgui.push_font(font_header)
@@ -358,7 +412,7 @@ def main():
         # Show the Title of the Application (font size: 24)
         imgui.set_next_window_position(4, 4)
         imgui.begin("Title", False, imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE | imgui.WINDOW_ALWAYS_AUTO_RESIZE)
-        imgui.text("KMeteorology - AWS 기상 자료 시각화")
+        imgui.text("KMeteorology - AWS 기상 자료")
 
         imgui.pop_font()
         imgui.push_font(font_body)
@@ -366,11 +420,11 @@ def main():
         # Show the current time
         time_str = weather_data.time_criteria.strftime("%Y-%m-%d %H:%M")
         imgui.separator()
-        imgui.text("기준 시간: %s" % time_str)
+        imgui.text("기준 시각: %s" % time_str)
         imgui.end()
 
         # Show the AWS Information (font size: 16)
-        content_size = (400, 320)
+        content_size = (400, 360)
         imgui.set_next_window_position(screen_size.x - 4 - content_size[0], screen_size.y - 4 - content_size[1])
         imgui.set_next_window_size(content_size[0], content_size[1])
         imgui.begin("AWS Information", False, imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE)
@@ -397,10 +451,14 @@ def main():
         imgui.text('Mode')
         imgui.spacing()
         imgui.spacing()
-        for param in radio_params:
-            clicked = imgui.radio_button(f'{param[0]} : {param[1]}', selected_type == param[0])
+        clicked = imgui.radio_button('None', not toggle_distribution)
+        if clicked:
+            toggle_distribution = False
+        for param in distribution_types.values():
+            clicked = imgui.radio_button(f'{param['name']} : {param['id']}', toggle_distribution and selected_type == param['id'])
             if clicked:
-                selected_type = param[0]
+                toggle_distribution = True
+                selected_type = param['id']
         imgui.end()
 
         imgui.pop_font()

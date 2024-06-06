@@ -26,13 +26,22 @@ class AWSPoint:
             self.array_data[key] = array('f', [weather_data.data_hoursofday[i][self.id][key] for i in range(24)])
         self.has_data = True
 
+    def get_slerped_data(self, key, time):
+        if key not in self.array_data:
+            return 0
+        if time < 0:
+            return self.array_data[key][0]
+        if time >= 23:
+            return self.array_data[key][23]
+        return util.slerp(self.array_data[key], time)
+
     def draw_opengl(self, shader, viewproj_matrix):
         pass
 
     def reset_imgui(self):
         self.w = 0
 
-    def draw_imgui(self, viewproj_matrix, screen_size, delta_time):
+    def draw_imgui(self, viewproj_matrix, screen_size, time, delta_time):
         v = viewproj_matrix * glm.vec3(-self.x, -self.y, 0)
         if v.x < -1 or v.x > 1 or v.y < -1 or v.y > 1:
             self.reset_imgui()
@@ -47,12 +56,12 @@ class AWSPoint:
         imgui.separator()
         plot_size = (max(self.w - 120, 10), 30)
         if self.has_data:
-            direction = util.get_direction(self.array_data['WD10'][-1])
-            imgui.plot_lines("%.1f°C" % self.array_data['TA'][-1], self.array_data['TA'], graph_size=plot_size)
-            imgui.plot_histogram("%.1fmm" % self.array_data['RN-DAY'][-1], self.array_data['RN-60m'], scale_min=0, scale_max=40, graph_size=plot_size)
-            imgui.plot_lines("%.1f%%" % self.array_data['HM'][-1], self.array_data['HM'], scale_min=0, scale_max=100, graph_size=plot_size)
-            imgui.plot_lines("%.1fm/s (%s)" % (self.array_data['WS10'][-1], direction), self.array_data['WS10'], scale_min=0, scale_max=10, graph_size=plot_size)
-            imgui.plot_lines("%.1fhPa" % self.array_data['PS'][-1], self.array_data['PS'], graph_size=plot_size)
+            direction = util.get_direction(self.get_slerped_data('WD10', time))
+            imgui.plot_lines("%.1f°C" % self.get_slerped_data('TA', time), self.array_data['TA'], graph_size=plot_size)
+            imgui.plot_histogram("%.1fmm" % self.get_slerped_data('RN-DAY', time), self.array_data['RN-60m'], scale_min=0, scale_max=40, graph_size=plot_size)
+            imgui.plot_lines("%.1f%%" % self.get_slerped_data('HM', time), self.array_data['HM'], scale_min=0, scale_max=100, graph_size=plot_size)
+            imgui.plot_lines("%.1fm/s (%s)" % (self.get_slerped_data('WS10', time), direction), self.array_data['WS10'], scale_min=0, scale_max=10, graph_size=plot_size)
+            imgui.plot_lines("%.1fhPa" % self.get_slerped_data('PS', time), self.array_data['PS'], graph_size=plot_size)
         else:
             imgui.text("No Data")
 

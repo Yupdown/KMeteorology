@@ -55,3 +55,9 @@ direction_str = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
 
 def get_direction(wd):
     return direction_str[int((wd + 22.5) / 45) % 8] if not np.isnan(wd) else 'nan'
+
+
+def slerp(data, time):
+    i = int(time)
+    t = time - i
+    return data[i] * (1 - t) + data[i + 1] * t if i < 23 else data[23]

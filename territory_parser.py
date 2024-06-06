@@ -48,7 +48,6 @@ class TerritoryMesh:
         glDeleteBuffers(1, [self.ebo])
 
     def load_data(self, path):
-
         polar_n = None
         polar_s = None
         polar_w = None
