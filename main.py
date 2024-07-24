@@ -13,6 +13,7 @@ import logging
 import sys
 import time
 import numpy as np
+import delaunay
 
 import mesh
 import shader
@@ -74,22 +75,121 @@ def gen_global_vbo():
 
 
 def create_quad():
-    mesh_quad = mesh.Mesh()
-    mesh_quad.vertices = [
-        -1.0, -1.0, 0.0,
-        1.0, -1.0, 0.0,
-        1.0, 1.0, 0.0,
-        -1.0, 1.0, 0.0
+    quad = mesh.Mesh()
+    quad.vertices = [
+        -0.5, -0.5, 0.0,
+        0.5, -0.5, 0.0,
+        0.5, 0.5, 0.0,
+        -0.5, 0.5, 0.0
     ]
-    mesh_quad.indices = [
+    quad.indices = [
         0, 1, 2,
         2, 3, 0
     ]
-    mesh_quad.gen_buffer()
-    return mesh_quad
+    quad.gen_buffer()
+    return quad
+
+
+triangulation_value_buffer = None
+triangulation_adj = None
+
+def create_triangulation(positions):
+    global triangulation_value_buffer
+    global triangulation_adj
+
+    n = len(positions)
+
+    edges = delaunay.delaunay(positions)
+    indices = []
+    triangulation_adj = [[] for _ in range(n)]
+
+    for e in edges:
+        triangulation_adj[e.org].append(e.dest)
+        triangulation_adj[e.dest].append(e.org)
+
+        if e.data is True:
+            continue
+
+        e1 = e
+        e2 = e1.sym.onext
+        e3 = e2.sym.onext
+
+        e4 = e.sym
+        e5 = e4.sym.onext
+        e6 = e5.sym.onext
+
+        e1.data = True
+        e2.data = True
+        e3.data = True
+
+        e4.data = True
+        e5.data = True
+        e6.data = True
+
+        i1 = e1.org
+        i2 = e2.org
+        i3 = e3.org
+        i4 = e3.dest
+
+        if i1 == i4:
+            indices.append(i1)
+            indices.append(i2)
+            indices.append(i3)
+
+        i1 = e4.org
+        i2 = e5.org
+        i3 = e6.org
+        i4 = e6.dest
+
+        if i1 == i4:
+            indices.append(i1)
+            indices.append(i2)
+            indices.append(i3)
+
+    vao = glGenVertexArrays(1)
+    vbo = glGenBuffers(2)
+    ebo = glGenBuffers(1)
+
+    glBindVertexArray(vao)
+
+    np_positions = np.array(positions, dtype=np.float32)
+    np_values = np.array([0 for _ in range(n)], dtype=np.float32)
+    np_indices = np.array(indices, dtype=np.uint32)
+
+    # position
+    glBindBuffer(GL_ARRAY_BUFFER, vbo[0])
+    glBufferData(GL_ARRAY_BUFFER, np_positions.nbytes, np_positions, GL_STATIC_DRAW)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), ctypes.c_void_p(0))
+    glEnableVertexAttribArray(0)
+
+    # value
+    glBindBuffer(GL_ARRAY_BUFFER, vbo[1])
+    glBufferData(GL_ARRAY_BUFFER, np_values.nbytes, np_values, GL_STATIC_DRAW)
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(GLfloat), ctypes.c_void_p(0))
+    glEnableVertexAttribArray(1)
+
+    # indices
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, np_indices.nbytes, np_indices, GL_STATIC_DRAW)
+
+    glBindVertexArray(0)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+
+    triangulation_value_buffer = vbo[1]
+    return vao, len(indices)
+
+
+def update_trangulation(values):
+    global triangulation_value_buffer
+
+    glBindBuffer(GL_ARRAY_BUFFER, triangulation_value_buffer)
+    glBufferSubData(GL_ARRAY_BUFFER, 0, len(values) * sizeof(GLfloat), np.array(values, dtype=np.float32))
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+
 
 texture = None
-tw, th = 64, 64
+tw, th = 960, 960
 fbo = None
 rbo = None
 
@@ -98,10 +198,10 @@ def resize_render_target(width, height):
     global texture
 
     glBindTexture(GL_TEXTURE_2D, texture)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tw, th, 0, GL_RGB, GL_UNSIGNED_BYTE, None)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, None)
 
     glBindRenderbuffer(GL_RENDERBUFFER, rbo)
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, tw, th)
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height)
 
     glBindTexture(GL_TEXTURE_2D, 0)
     glBindRenderbuffer(GL_RENDERBUFFER, 0)
@@ -114,6 +214,8 @@ def load_texture(file):
     texture = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, texture)
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img_data)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
     glGenerateMipmap(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, 0)
@@ -152,8 +254,8 @@ def window_resize_callback(window, width, height):
         return
 
     aspect_ratio = width / height
-    tw = int(64 * aspect_ratio)
-    th = 64
+    tw = width
+    th = height
 
     # resize the texture
     if texture:
@@ -173,16 +275,12 @@ def main():
 
     info_file = open('aws_info.txt', 'r')
     points = {}
-    points_primary = {}
-    sizeof_primary = 114
     for line in info_file:
         if line.startswith('#'):
             continue
         info = line.split()
         point = AWSPoint(info)
         points[point.id] = point
-        if len(points_primary) < sizeof_primary:
-            points_primary[point.id] = point
     weather_data.initialize()
     for p in points.values():
         p.initialize_data(weather_data)
@@ -221,14 +319,8 @@ def main():
     elapsed_time = time.time()
 
     territory_mesh = territory_parser.TerritoryMesh("Resources/territory.svg")
+    triangulation_mesh, triangulation_indices_count = create_triangulation([(p.x, p.y) for p in points.values()])
     quad_mesh = create_quad()
-
-    model_location = glGetUniformLocation(shaders["HEATMAP"].active_shader, "u_PointCount")
-    glUniform1i(model_location, sizeof_primary)
-
-    u_PointCoords = np.array([[p.x, p.y] for p in points_primary.values()], dtype=np.float32)
-    model_location = glGetUniformLocation(shaders["HEATMAP"].active_shader, "u_PointCoords")
-    glUniform2fv(model_location, sizeof_primary, u_PointCoords)
 
     glUseProgram(0)
 
@@ -304,22 +396,26 @@ def main():
         glUniform2f(model_location, *distribution_types[selected_type]['range'])
 
         arr = []
-        for p in points_primary.values():
-            if p.has_data:
-                value = p.get_slerped_data(selected_type, time_factor * 23)
-                # if it's not a number, set it to 0
-                if np.isnan(value):
-                    value = -50.0
-                arr.append(value)
-            else:
-                arr.append(0.0)
+        pv = list(points.values())
+        t = time_factor * 23
+        for i in range(len(pv)):
+            value = float('NaN')
+            if pv[i].has_data:
+                value = pv[i].get_slerped_data(selected_type, t)
+            if np.isnan(value):
+                for adj in triangulation_adj[i]:
+                    value = pv[adj].get_slerped_data(selected_type, t)
+                    if not np.isnan(value):
+                        break
+            arr.append(value)
 
-        model_location = glGetUniformLocation(shader_program.active_shader, "u_PointValues")
-        u_PointValues = np.array(arr, dtype=np.float32)
-        glUniform1fv(model_location, sizeof_primary, u_PointValues)
+        update_trangulation(arr)
 
-        glBindVertexArray(quad_mesh.vao)
-        glDrawElements(GL_TRIANGLES, len(quad_mesh.indices), GL_UNSIGNED_INT, None)
+        model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
+        glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(world_matrix))
+
+        glBindVertexArray(triangulation_mesh)
+        glDrawElements(GL_TRIANGLES, triangulation_indices_count, GL_UNSIGNED_INT, None)
 
         # Second Pass
         glBindFramebuffer(GL_FRAMEBUFFER, 0)

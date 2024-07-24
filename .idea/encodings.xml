@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="Encoding">
+    <file url="file://$PROJECT_DIR$/Cache/data202406050500.txt" charset="x-windows-949" />
+    <file url="file://$PROJECT_DIR$/Cache/data202406052100.txt" charset="x-windows-949" />
+    <file url="file://$PROJECT_DIR$/Cache/data202406070300.txt" charset="x-windows-949" />
     <file url="file://$PROJECT_DIR$/aws_info.txt" charset="x-windows-949" />
+    <file url="file://$PROJECT_DIR$/output_file.txt" charset="x-windows-949" />
     <file url="file://$PROJECT_DIR$/output_file_1.txt" charset="x-windows-949" />
   </component>
 </project>
