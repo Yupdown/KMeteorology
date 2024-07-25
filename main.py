@@ -90,23 +90,65 @@ def create_quad():
     return quad
 
 
-triangulation_value_buffer = None
-triangulation_adj = None
+triangulation_buffers = None
 
-def create_triangulation(positions):
-    global triangulation_value_buffer
-    global triangulation_adj
+def create_triangulation(n):
+    global triangulation_buffers
+
+    vao = glGenVertexArrays(1)
+    vbo = glGenBuffers(2)
+    ebo = glGenBuffers(1)
+
+    glBindVertexArray(vao)
+
+    np_positions = np.array([(0, 0) for _ in range(n)], dtype=np.float32)
+    np_values = np.array([0 for _ in range(n)], dtype=np.float32)
+    np_indices = np.array([0 for _ in range(n * 3)], dtype=np.uint32)
+
+    # position
+    glBindBuffer(GL_ARRAY_BUFFER, vbo[0])
+    glBufferData(GL_ARRAY_BUFFER, np_positions.nbytes, np_positions, GL_STATIC_DRAW)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), ctypes.c_void_p(0))
+    glEnableVertexAttribArray(0)
+
+    # value
+    glBindBuffer(GL_ARRAY_BUFFER, vbo[1])
+    glBufferData(GL_ARRAY_BUFFER, np_values.nbytes, np_values, GL_STATIC_DRAW)
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(GLfloat), ctypes.c_void_p(0))
+    glEnableVertexAttribArray(1)
+
+    # indices
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, np_indices.nbytes, np_indices, GL_STATIC_DRAW)
+
+    glBindVertexArray(0)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+
+    triangulation_buffers = (vao, vbo[0], vbo[1], ebo)
+    return vao
+
+
+def update_trangulation(points, type, t):
+    global triangulation_buffers
+
+    positions = []
+    values = []
+    indices = []
+
+    for p in points.values():
+        value = float('NaN')
+        if p.has_data:
+            value = p.get_slerped_data(type, t)
+        if np.isnan(value):
+            continue
+        positions.append((p.x, p.y))
+        values.append(value)
 
     n = len(positions)
-
     edges = delaunay.delaunay(positions)
-    indices = []
-    triangulation_adj = [[] for _ in range(n)]
 
     for e in edges:
-        triangulation_adj[e.org].append(e.dest)
-        triangulation_adj[e.dest].append(e.org)
-
         if e.data is True:
             continue
 
@@ -146,47 +188,26 @@ def create_triangulation(positions):
             indices.append(i2)
             indices.append(i3)
 
-    vao = glGenVertexArrays(1)
-    vbo = glGenBuffers(2)
-    ebo = glGenBuffers(1)
-
-    glBindVertexArray(vao)
-
     np_positions = np.array(positions, dtype=np.float32)
-    np_values = np.array([0 for _ in range(n)], dtype=np.float32)
+    np_values = np.array(values, dtype=np.float32)
     np_indices = np.array(indices, dtype=np.uint32)
 
-    # position
-    glBindBuffer(GL_ARRAY_BUFFER, vbo[0])
+    glBindVertexArray(triangulation_buffers[0])
+
+    glBindBuffer(GL_ARRAY_BUFFER, triangulation_buffers[1])
     glBufferData(GL_ARRAY_BUFFER, np_positions.nbytes, np_positions, GL_STATIC_DRAW)
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), ctypes.c_void_p(0))
-    glEnableVertexAttribArray(0)
 
-    # value
-    glBindBuffer(GL_ARRAY_BUFFER, vbo[1])
+    glBindBuffer(GL_ARRAY_BUFFER, triangulation_buffers[2])
     glBufferData(GL_ARRAY_BUFFER, np_values.nbytes, np_values, GL_STATIC_DRAW)
-    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(GLfloat), ctypes.c_void_p(0))
-    glEnableVertexAttribArray(1)
 
-    # indices
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, triangulation_buffers[3])
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, np_indices.nbytes, np_indices, GL_STATIC_DRAW)
 
     glBindVertexArray(0)
     glBindBuffer(GL_ARRAY_BUFFER, 0)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
 
-    triangulation_value_buffer = vbo[1]
-    return vao, len(indices)
-
-
-def update_trangulation(values):
-    global triangulation_value_buffer
-
-    glBindBuffer(GL_ARRAY_BUFFER, triangulation_value_buffer)
-    glBufferSubData(GL_ARRAY_BUFFER, 0, len(values) * sizeof(GLfloat), np.array(values, dtype=np.float32))
-    glBindBuffer(GL_ARRAY_BUFFER, 0)
-
+    return len(indices)
 
 texture = None
 tw, th = 960, 960
@@ -319,7 +340,8 @@ def main():
     elapsed_time = time.time()
 
     territory_mesh = territory_parser.TerritoryMesh("Resources/territory.svg")
-    triangulation_mesh, triangulation_indices_count = create_triangulation([(p.x, p.y) for p in points.values()])
+    triangulation_mesh = create_triangulation(len(points))
+    triangulation_indices_count = update_trangulation(points, selected_type, time_factor * 23)
     quad_mesh = create_quad()
 
     glUseProgram(0)
@@ -371,8 +393,6 @@ def main():
         projection_matrix = glm.ortho(-aspect_ratio * camera_size, aspect_ratio * camera_size, -camera_size, camera_size, -1000.0, 1000.0)
         viewprojinv_matrix = glm.inverse(projection_matrix * view_matrix)
 
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-
         # update global uniform buffer
         glBindBuffer(GL_UNIFORM_BUFFER, guid)
         glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, glm.value_ptr(view_matrix))
@@ -381,6 +401,8 @@ def main():
         glBindBuffer(GL_UNIFORM_BUFFER, 0)
 
         # First Pass
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+
         glBindFramebuffer(GL_FRAMEBUFFER, fbo)
         glBindTexture(GL_TEXTURE_2D, palette[distribution_types[selected_type]['palette']])
 
@@ -395,22 +417,6 @@ def main():
         model_location = glGetUniformLocation(shaders["HEATMAP"].active_shader, "u_PointValueRange")
         glUniform2f(model_location, *distribution_types[selected_type]['range'])
 
-        arr = []
-        pv = list(points.values())
-        t = time_factor * 23
-        for i in range(len(pv)):
-            value = float('NaN')
-            if pv[i].has_data:
-                value = pv[i].get_slerped_data(selected_type, t)
-            if np.isnan(value):
-                for adj in triangulation_adj[i]:
-                    value = pv[adj].get_slerped_data(selected_type, t)
-                    if not np.isnan(value):
-                        break
-            arr.append(value)
-
-        update_trangulation(arr)
-
         model_location = glGetUniformLocation(shader_program.active_shader, "model_Transform")
         glUniformMatrix4fv(model_location, 1, GL_FALSE, glm.value_ptr(world_matrix))
 
@@ -418,6 +424,8 @@ def main():
         glDrawElements(GL_TRIANGLES, triangulation_indices_count, GL_UNSIGNED_INT, None)
 
         # Second Pass
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
         glBindTexture(GL_TEXTURE_2D, texture)
 
@@ -534,6 +542,7 @@ def main():
         imgui.text('Control')
         imgui.spacing()
         imgui.spacing()
+        last_time_factor = time_factor
         time_factor = imgui.slider_float('Time Factor', time_factor, 0, 1, '')[1]
         hours_delta = 24 * (1 - time_factor)
         lerped_time = weather_data.time_criteria - datetime.timedelta(hours=hours_delta)
@@ -548,6 +557,7 @@ def main():
         imgui.spacing()
         imgui.spacing()
         clicked = imgui.radio_button('None', not toggle_distribution)
+        last_selected_type = selected_type
         if clicked:
             toggle_distribution = False
         for param in distribution_types.values():
@@ -556,6 +566,9 @@ def main():
                 toggle_distribution = True
                 selected_type = param['id']
         imgui.end()
+
+        if last_time_factor != time_factor or last_selected_type != selected_type:
+            triangulation_indices_count = update_trangulation(points, selected_type, time_factor * 23)
 
         imgui.pop_font()
         imgui.render()
