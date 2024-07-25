@@ -94,6 +94,7 @@ triangulation_buffers = None
 
 def create_triangulation(n):
     global triangulation_buffers
+    n += 4
 
     vao = glGenVertexArrays(1)
     vbo = glGenBuffers(2)
@@ -144,6 +145,17 @@ def update_trangulation(points, type, t):
             continue
         positions.append((p.x, p.y))
         values.append(value)
+
+    inf = 10000
+    positions.append((-inf, -inf))
+    positions.append((-inf, inf))
+    positions.append((inf, -inf))
+    positions.append((inf, inf))
+
+    values.append(0)
+    values.append(0)
+    values.append(0)
+    values.append(0)
 
     n = len(positions)
     edges = delaunay.delaunay(positions)
